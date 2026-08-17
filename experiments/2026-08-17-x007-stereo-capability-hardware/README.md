@@ -2,7 +2,7 @@
 
 Date: 2026-08-17
 
-Status: five-process balanced qualification passed; debug-layer prerequisite missing
+Status: five-process balanced and CI-artifact debug qualifications passed
 
 ## Identity
 
@@ -150,9 +150,9 @@ synthetic candidate because it consistently has the lower GPU median without a
 geometry shader.
 
 These percentages remain a synthetic upper bound, not a prediction of Skyrim
-FPS. In-game promotion is still blocked by the missing debug-layer qualification
-and by the need for StereoTrace to prove a reachable, material-safe duplicated
-region in Skyrim/CSX.
+FPS. They are now paired with clean debug-layer qualification; in-game promotion
+remains blocked by the need for StereoTrace to prove a reachable, material-safe
+duplicated region in Skyrim/CSX.
 
 ## D3D11 debug-layer qualification
 
@@ -180,6 +180,25 @@ corrected runtime shader and launcher produced run
 - process exit: 0.
 
 The launcher was also hardened to compute its executable SHA-256 directly with
-.NET rather than depending on PowerShell module autoloading. The debug-layer
-result becomes final qualification evidence after the corrected shader and
-launcher are packaged by CI and the CI artifact reproduces the zero-message run.
+.NET rather than depending on PowerShell module autoloading.
+
+CI run
+[32042428480](https://github.com/zerotrust-dev/skyrimvr-frame-pipeline-lab/actions/runs/32042428480)
+then passed for commit `40593ebcf70473184cbc9ae71076d9a19934f047`. Its
+packaged binary SHA-256 is
+`91f5b29b7ea33e72ade2f2356c930729758a7c19ebebc3ad06c629d21276242f`.
+Final CI-artifact debug run `20260817T175008.295Z-p9776` reproduced:
+
+- B0-B3 color and depth validation: pass;
+- zero eye, seam and depth mismatches for every backend;
+- B2 maximum channel delta: 1, with zero pixels outside tolerance;
+- D3D11 debug errors: 0;
+- D3D11 debug warnings: 0;
+- process exit: 0;
+- evidence schema/schedule validation: pass;
+- wrapper SHA-256 and independently calculated binary SHA-256: exact match.
+
+The standalone synthetic capability gate is now satisfied. B2 remains the
+preferred route. The next boundary is no longer D3D11 mechanism viability; it is
+Skyrim/Community Shaders hook reachability and material-safe classification,
+which StereoTrace must establish before an allowlisted in-game PoC.
