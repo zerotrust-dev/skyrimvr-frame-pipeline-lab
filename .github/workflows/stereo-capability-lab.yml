@@ -1,0 +1,91 @@
+name: StereoCapabilityLab
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/StereoCapabilityLab/**"
+      - ".github/workflows/stereo-capability-lab.yml"
+  pull_request:
+    paths:
+      - "tools/StereoCapabilityLab/**"
+      - ".github/workflows/stereo-capability-lab.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-msvc:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      LAB_SOURCE: tools/StereoCapabilityLab
+      LAB_BUILD: build/StereoCapabilityLab
+      LAB_STAGE: artifact/StereoCapabilityLab
+      LAB_DIAGNOSTICS: artifact/ci-diagnostics
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CI evidence
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:LAB_DIAGNOSTICS | Out-Null
+          $context = [ordered]@{
+            utc = [DateTime]::UtcNow.ToString('o')
+            commit = '${{ github.sha }}'
+            ref = '${{ github.ref }}'
+            run_id = '${{ github.run_id }}'
+            run_attempt = '${{ github.run_attempt }}'
+            runner_os = $env:RUNNER_OS
+            runner_arch = $env:RUNNER_ARCH
+            image_os = $env:ImageOS
+            image_version = $env:ImageVersion
+          }
+          $context | ConvertTo-Json | Set-Content -LiteralPath "$env:LAB_DIAGNOSTICS/ci-context.json" -Encoding utf8
+          cmake --version 2>&1 | Tee-Object -FilePath "$env:LAB_DIAGNOSTICS/toolchain.txt"
+
+      - name: Configure x64 Release
+        run: |
+          cmake -S $env:LAB_SOURCE -B $env:LAB_BUILD -A x64 2>&1 | Tee-Object -FilePath "$env:LAB_DIAGNOSTICS/configure.log"
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXITCODE" }
+
+      - name: Build x64 Release
+        run: |
+          cmake --build $env:LAB_BUILD --config Release --parallel 2>&1 | Tee-Object -FilePath "$env:LAB_DIAGNOSTICS/build.log"
+          if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
+
+      - name: Stage deployable package
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:LAB_STAGE | Out-Null
+          Copy-Item -LiteralPath "$env:LAB_BUILD/Release/StereoCapabilityLab.exe" -Destination $env:LAB_STAGE
+          Copy-Item -LiteralPath "$env:LAB_SOURCE/Invoke-StereoCapabilityLab.ps1" -Destination $env:LAB_STAGE
+          Copy-Item -LiteralPath "$env:LAB_SOURCE/README.md" -Destination $env:LAB_STAGE
+          Copy-Item -LiteralPath "$env:LAB_SOURCE/shaders" -Destination $env:LAB_STAGE -Recurse
+          Copy-Item -LiteralPath "$env:LAB_SOURCE/ci" -Destination $env:LAB_STAGE -Recurse
+
+      - name: CPU-only evidence self-test
+        run: |
+          & "$env:LAB_STAGE/StereoCapabilityLab.exe" --self-test --output "$env:LAB_STAGE/ci-results" 2>&1 | Tee-Object -FilePath "$env:LAB_DIAGNOSTICS/self-test-console.log"
+          if ($LASTEXITCODE -ne 0) { throw "Self-test failed with exit code $LASTEXITCODE" }
+
+      - name: Standard D3D11 WARP smoke test
+        run: |
+          & "$env:LAB_STAGE/StereoCapabilityLab.exe" --smoke --warp --output "$env:LAB_STAGE/ci-results" 2>&1 | Tee-Object -FilePath "$env:LAB_DIAGNOSTICS/warp-smoke-console.log"
+          if ($LASTEXITCODE -ne 0) { throw "WARP smoke test failed with exit code $LASTEXITCODE" }
+
+      - name: Validate evidence schemas and row counts
+        if: always()
+        run: python "$env:LAB_SOURCE/ci/validate_results.py" "$env:LAB_STAGE/ci-results"
+
+      - name: Upload deployable lab and all CI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: StereoCapabilityLab-windows-x64-${{ github.sha }}
+          path: artifact
+          if-no-files-found: warn
+          retention-days: 30

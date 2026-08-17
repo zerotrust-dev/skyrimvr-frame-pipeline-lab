@@ -1,0 +1,6 @@
+/build/
+/out/
+/results/*
+!/results/README.md
+__pycache__/
+*.pyc
