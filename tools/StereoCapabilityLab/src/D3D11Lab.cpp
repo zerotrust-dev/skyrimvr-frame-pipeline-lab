@@ -1013,8 +1013,8 @@ void D3D11Lab::Impl::WriteSummary() const {
             << "Debug-layer runs are correctness evidence, not release-performance evidence. GPU statistics omit invalid/disjoint samples.\n\n"
             << "| Backend | CPU prepare mean (us) | CPU submit mean/P50/P95/P99 (us) | GPU mean/P50/P95/P99 (us) | Valid GPU samples |\n"
             << "|---|---:|---|---|---:|\n";
-    std::map<std::string, double> cpuMeans;
-    std::map<std::string, double> gpuMeans;
+    std::map<std::string, double> cpuMedians;
+    std::map<std::string, double> gpuMedians;
     for (const auto& backend : options_.backends) {
         std::vector<double> cpu;
         std::vector<double> prepare;
@@ -1028,8 +1028,8 @@ void D3D11Lab::Impl::WriteSummary() const {
         const auto cpuStats = CalculateStats(cpu);
         const auto prepareStats = CalculateStats(prepare);
         const auto gpuStats = CalculateStats(gpu);
-        if (!cpu.empty()) cpuMeans[backend] = cpuStats.mean;
-        if (!gpu.empty()) gpuMeans[backend] = gpuStats.mean;
+        if (!cpu.empty()) cpuMedians[backend] = cpuStats.median;
+        if (!gpu.empty()) gpuMedians[backend] = gpuStats.median;
         summary << "| " << backend << " | " << std::fixed << std::setprecision(2)
                 << prepareStats.mean << " | "
                 << cpuStats.mean << " / " << cpuStats.median << " / " << cpuStats.p95 << " / " << cpuStats.p99
@@ -1040,24 +1040,43 @@ void D3D11Lab::Impl::WriteSummary() const {
     summary << "\n## Decision gate\n\n";
     if (frameRecords_.empty()) {
         summary << "No performance decision: this was a validation-only run.\n";
-    } else if (!cpuMeans.contains("B0") || !gpuMeans.contains("B0")) {
+    } else if (!cpuMedians.contains("B0") || !gpuMedians.contains("B0") ||
+               cpuMedians.at("B0") <= 0.0 || gpuMedians.at("B0") <= 0.0) {
         summary << "No promotion decision: B0 reference timings are absent or invalid.\n";
+    } else if (!cpuMedians.contains("B1") || !gpuMedians.contains("B1") ||
+               cpuMedians.at("B1") <= 0.0 || gpuMedians.at("B1") <= 0.0) {
+        summary << "No promotion decision: the identical-submission B1 control is absent or invalid.\n";
     } else {
+        const double controlCpuDelta = 100.0 * (cpuMedians["B1"] - cpuMedians["B0"]) /
+                                       cpuMedians["B0"];
+        const double controlGpuDelta = 100.0 * (gpuMedians["B1"] - gpuMedians["B0"]) /
+                                       gpuMedians["B0"];
+        const bool controlPass = std::abs(controlCpuDelta) <= 5.0 && std::abs(controlGpuDelta) <= 5.0;
+        summary << "B0/B1 identical-submission median control: CPU "
+                << (controlCpuDelta >= 0 ? "+" : "") << controlCpuDelta << "%, GPU "
+                << (controlGpuDelta >= 0 ? "+" : "") << controlGpuDelta << "%; control "
+                << (controlPass ? "PASS" : "FAIL") << ".\n\n";
         bool performanceCandidate = false;
         for (const auto& backend : {std::string("B2"), std::string("B3")}) {
             const auto validation = std::find_if(validationRecords_.begin(), validationRecords_.end(),
                                                  [&](const auto& record) { return record.backend == backend; });
             if (validation == validationRecords_.end() || !validation->passed ||
-                !cpuMeans.contains(backend) || !gpuMeans.contains(backend)) continue;
-            const double cpuSaving = 100.0 * (cpuMeans["B0"] - cpuMeans[backend]) / cpuMeans["B0"];
-            const double gpuChange = 100.0 * (gpuMeans[backend] - gpuMeans["B0"]) / gpuMeans["B0"];
-            const bool passesPerformance = cpuSaving >= 15.0 && gpuChange <= 5.0;
-            summary << "- " << backend << ": CPU submission " << cpuSaving << "% lower; GPU "
+                !cpuMedians.contains(backend) || !gpuMedians.contains(backend) ||
+                cpuMedians.at(backend) <= 0.0 || gpuMedians.at(backend) <= 0.0) continue;
+            const double cpuSaving = 100.0 * (cpuMedians["B0"] - cpuMedians[backend]) /
+                                     cpuMedians["B0"];
+            const double gpuChange = 100.0 * (gpuMedians[backend] - gpuMedians["B0"]) /
+                                     gpuMedians["B0"];
+            const bool passesPerformance = controlPass && cpuSaving >= 15.0 && gpuChange <= 5.0;
+            summary << "- " << backend << ": median CPU submission " << cpuSaving
+                    << "% lower; median GPU "
                     << (gpuChange >= 0 ? "+" : "") << gpuChange << "%; synthetic performance gate "
                     << (passesPerformance ? "PASS" : "FAIL") << ".\n";
             performanceCandidate = performanceCandidate || passesPerformance;
         }
-        if (!performanceCandidate) {
+        if (!controlPass) {
+            summary << "\nNo backend can be promoted from this process because the B0/B1 control failed.\n";
+        } else if (!performanceCandidate) {
             summary << "\nNo one-call backend meets the synthetic performance threshold in this run.\n";
         } else if (options_.debugLayer) {
             summary << "\nA performance threshold appears satisfied, but debug-layer timings are not promotion evidence. Repeat in release mode and pair by binary/configuration signature.\n";

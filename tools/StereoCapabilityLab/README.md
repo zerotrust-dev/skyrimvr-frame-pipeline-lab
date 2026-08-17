@@ -50,21 +50,21 @@ could occur before the executable initializes.
 Fast hardware check:
 
 ```powershell
-.\Invoke-StereoCapabilityLab.ps1 -Executable .\StereoCapabilityLab.exe -Mode Smoke
+.\Run-StereoCapabilityLab.cmd -Mode Smoke
 ```
 
 Correctness qualification with the D3D debug layer (Windows Graphics Tools must
 be installed):
 
 ```powershell
-.\Invoke-StereoCapabilityLab.ps1 -Executable .\StereoCapabilityLab.exe `
+.\Run-StereoCapabilityLab.cmd `
   -Mode Validation -Width 1280 -Height 1280 -Draws 128 -DebugLayer
 ```
 
 Release performance example:
 
 ```powershell
-.\Invoke-StereoCapabilityLab.ps1 -Executable .\StereoCapabilityLab.exe `
+.\Run-StereoCapabilityLab.cmd `
   -Mode Benchmark -Scene S1 -Width 3494 -Height 3558 -Draws 1000 `
   -Warmup 300 -Frames 2000
 ```
@@ -111,9 +111,10 @@ See [results/README.md](results/README.md) for the directory schema.
 Image validation allows at most two 8-bit channel levels per pixel and at most
 0.1% pixels/depth samples outside tolerance; no above-tolerance seam pixel is
 allowed. A failed backend is not benchmarked.
-The summary applies the current synthetic performance gate:
+The summary applies the current synthetic performance gate using medians:
 
 - validation passes;
+- B0 and B1 identical-submission CPU/GPU medians agree within 5%;
 - at least 15% lower CPU submission time than B0;
 - no more than 5% GPU regression against B0.
 

@@ -63,6 +63,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:LAB_STAGE | Out-Null
           Copy-Item -LiteralPath "$env:LAB_BUILD/Release/StereoCapabilityLab.exe" -Destination $env:LAB_STAGE
           Copy-Item -LiteralPath "$env:LAB_SOURCE/Invoke-StereoCapabilityLab.ps1" -Destination $env:LAB_STAGE
+          Copy-Item -LiteralPath "$env:LAB_SOURCE/Run-StereoCapabilityLab.cmd" -Destination $env:LAB_STAGE
           Copy-Item -LiteralPath "$env:LAB_SOURCE/README.md" -Destination $env:LAB_STAGE
           Copy-Item -LiteralPath "$env:LAB_SOURCE/shaders" -Destination $env:LAB_STAGE -Recurse
           Copy-Item -LiteralPath "$env:LAB_SOURCE/ci" -Destination $env:LAB_STAGE -Recurse

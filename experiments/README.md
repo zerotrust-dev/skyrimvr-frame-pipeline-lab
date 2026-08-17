@@ -31,3 +31,4 @@ configuration identity is exploratory, not decision evidence.
 | X-004 | Per-eye work and safe-reprojection mask | H1, H4 |
 | X-005 | Ordinary 72 Hz vs 72 Hz Upscale/Lab | H2, H3 |
 | X-006 | Forest alpha/shadow/asset pathology trace | H5 |
+| [X-007](2026-08-17-x007-stereo-capability-hardware/README.md) | StereoCapabilityLab CI and RTX 5090 qualification | H1 |
