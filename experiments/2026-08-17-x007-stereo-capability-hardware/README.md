@@ -2,7 +2,7 @@
 
 Date: 2026-08-17
 
-Status: first hardware process passed; debug-layer prerequisite missing
+Status: five-process balanced qualification passed; debug-layer prerequisite missing
 
 ## Identity
 
@@ -121,6 +121,35 @@ controls, while B2/B3 remain stable.
 
 The benchmark scheduler therefore now uses balanced 25-frame blocks
 with a rotating start backend and alternating traversal direction. Every CSV
-sample records its schedule round, position, and intra-block frame. Promotion
-remains blocked until CI and repeated hardware processes validate this corrected
-schedule.
+sample records its schedule round, position, and intra-block frame.
+
+## Balanced-schedule qualification
+
+CI run
+[32040238189](https://github.com/zerotrust-dev/skyrimvr-frame-pipeline-lab/actions/runs/32040238189)
+passed for scheduler commit `6838721fb99dd4cb29d151c871e157163221808b`.
+The packaged binary SHA-256 is
+`8d0d94a9452e824920604536748189009eba088a72b18bf1b2b886a2d347a416`.
+
+Five independent RTX 5090 processes used S1, 1280x1280 per eye, 1,000 objects,
+300 balanced warmup frames and 2,000 balanced measured frames per backend:
+
+| Run | CPU control | GPU control | B2 CPU saving | B2 GPU change | B3 CPU saving | B3 GPU change |
+|---|---:|---:|---:|---:|---:|---:|
+| `150304-p14220` | +1.23% | -0.34% | 99.01% | -80.15% | 99.01% | -74.61% |
+| `150329-p42360` | 0.00% | +0.07% | 98.68% | -79.69% | 98.68% | -74.91% |
+| `150331-p11120` | +0.76% | -0.67% | 98.99% | -80.11% | 98.99% | -75.13% |
+| `150333-p28196` | -0.25% | -0.81% | 99.01% | -80.03% | 99.01% | -75.17% |
+| `150336-p31076` | 0.00% | -0.14% | 98.69% | -79.84% | 98.69% | -74.93% |
+
+All five evidence directories pass the strengthened schema/schedule validator;
+all B0-B3 validations pass; all 40,000 GPU timing samples are valid; and B0/B1 passes
+the identical-submission control in every process. The balanced scheduler has
+therefore removed the measured order confound at this matrix. B2 is the leading
+synthetic candidate because it consistently has the lower GPU median without a
+geometry shader.
+
+These percentages remain a synthetic upper bound, not a prediction of Skyrim
+FPS. In-game promotion is still blocked by the missing debug-layer qualification
+and by the need for StereoTrace to prove a reachable, material-safe duplicated
+region in Skyrim/CSX.
