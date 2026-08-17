@@ -2,6 +2,7 @@
 
 #include <Windows.h>
 #include <bcrypt.h>
+#include <objbase.h>
 #include <powrprof.h>
 #include <winternl.h>
 

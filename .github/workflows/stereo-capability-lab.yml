@@ -78,7 +78,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "WARP smoke test failed with exit code $LASTEXITCODE" }
 
       - name: Validate evidence schemas and row counts
-        if: always()
+        if: ${{ always() && hashFiles('artifact/StereoCapabilityLab/ci-results/*/run_manifest.json') != '' }}
         run: python "$env:LAB_SOURCE/ci/validate_results.py" "$env:LAB_STAGE/ci-results"
 
       - name: Upload deployable lab and all CI evidence
