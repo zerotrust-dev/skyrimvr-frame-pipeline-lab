@@ -76,13 +76,61 @@ def validate_run(run: Path) -> None:
         raise ValueError(f"{run}: validation failed for {failed}")
 
     with (run / "benchmark.csv").open("r", encoding="utf-8-sig", newline="") as stream:
-        frames = list(csv.DictReader(stream))
+        reader = csv.DictReader(stream)
+        frame_fields = set(reader.fieldnames or [])
+        frames = list(reader)
     if not config.get("validation_only"):
+        schedule_fields = {
+            "frame_id",
+            "backend",
+            "schedule_round",
+            "schedule_position",
+            "block_frame",
+        }
+        if not schedule_fields <= frame_fields:
+            missing_fields = sorted(schedule_fields - frame_fields)
+            raise ValueError(f"{run}: missing benchmark schedule fields {missing_fields}")
         expected_rows = int(config["measured_frames"]) * len(expected)
         if len(frames) != expected_rows:
             raise ValueError(f"{run}: {len(frames)} frame rows, expected {expected_rows}")
         if not all(row["run_id"] == manifest["run_id"] for row in frames):
             raise ValueError(f"{run}: frame identity mismatch")
+
+        measured_frames = int(config["measured_frames"])
+        rounds: dict[int, list[dict[str, str]]] = {}
+        blocks: dict[tuple[str, int], list[dict[str, str]]] = {}
+        for row in frames:
+            backend = row["backend"]
+            if backend not in expected:
+                raise ValueError(f"{run}: unexpected benchmark backend {backend}")
+            round_id = int(row["schedule_round"])
+            rounds.setdefault(round_id, []).append(row)
+            blocks.setdefault((backend, round_id), []).append(row)
+
+        for backend in expected:
+            backend_rows = [row for row in frames if row["backend"] == backend]
+            if len(backend_rows) != measured_frames:
+                raise ValueError(
+                    f"{run}: {backend} has {len(backend_rows)} frames, expected {measured_frames}"
+                )
+            frame_ids = sorted(int(row["frame_id"]) for row in backend_rows)
+            if frame_ids != list(range(measured_frames)):
+                raise ValueError(f"{run}: {backend} frame IDs are not contiguous")
+
+        expected_positions = set(range(len(expected)))
+        for round_id, round_rows in rounds.items():
+            round_backends = {row["backend"] for row in round_rows}
+            round_positions = {int(row["schedule_position"]) for row in round_rows}
+            if round_backends != expected or round_positions != expected_positions:
+                raise ValueError(
+                    f"{run}: schedule round {round_id} is incomplete or has duplicate positions"
+                )
+
+        for (backend, round_id), block_rows in blocks.items():
+            positions = {int(row["schedule_position"]) for row in block_rows}
+            block_frames = sorted(int(row["block_frame"]) for row in block_rows)
+            if len(positions) != 1 or block_frames != list(range(len(block_rows))):
+                raise ValueError(f"{run}: malformed block for {backend} round {round_id}")
 
 
 def main() -> int:

@@ -92,3 +92,35 @@ No in-game promotion occurs until:
 - a matching debug-layer run has zero errors;
 - process-level repetitions reproduce the result at the representative matrix;
 - StereoTrace proves a reachable, material-safe duplicated region in Skyrim/CSX.
+
+## Gate verification and order-effect discovery
+
+CI run
+[32038392042](https://github.com/zerotrust-dev/skyrimvr-frame-pipeline-lab/actions/runs/32038392042)
+passed for commit `aa335c445f90fe80b4a827d88f6d61674cf44499`. The
+CI-built binary was then run twice on the RTX 5090 with 2,000 measured frames
+per backend.
+
+Normal order (`B0,B1,B2,B3`), run `20260817T143818.816Z-p36392`:
+
+- B0/B1 CPU median delta: +3.60%;
+- B0/B1 GPU median delta: -22.39%;
+- control: fail, so B2/B3 promotion was correctly blocked.
+
+Reversed control order (`B1,B0`), run `20260817T143928.749Z-p35220`:
+
+- B1, now first, became slower than B0;
+- B0/B1 CPU median delta: +34.90%;
+- B0/B1 GPU median delta: +10.74%;
+- control: fail.
+
+The slower result following the first measured backend demonstrates temporal
+order contamination rather than a B0/B1 rendering difference. Raw 250-frame
+windows also show substantial within-backend drift for the two high-submission
+controls, while B2/B3 remain stable.
+
+The benchmark scheduler therefore now uses balanced 25-frame blocks
+with a rotating start backend and alternating traversal direction. Every CSV
+sample records its schedule round, position, and intra-block frame. Promotion
+remains blocked until CI and repeated hardware processes validate this corrected
+schedule.

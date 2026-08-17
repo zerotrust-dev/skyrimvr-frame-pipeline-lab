@@ -118,6 +118,12 @@ The summary applies the current synthetic performance gate using medians:
 - at least 15% lower CPU submission time than B0;
 - no more than 5% GPU regression against B0.
 
+Benchmark measurement is temporally balanced. Each backend receives 25-frame
+blocks; the starting backend rotates and traversal direction alternates. The
+CSV records `schedule_round`, `schedule_position`, and `block_frame` for every
+sample. This prevents a backend from owning only the early or late portion of a
+process and exposes the exact schedule for post-run analysis.
+
 Promotion additionally requires a separate matching debug-layer validation run
 with zero errors. Debug timings are never treated as release performance; the two
 runs are paired by binary/configuration signatures. Passing both means “worth one

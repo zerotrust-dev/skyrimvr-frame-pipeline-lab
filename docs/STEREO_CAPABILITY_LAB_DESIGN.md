@@ -250,6 +250,12 @@ GPU statistics:  mean, median, P95, P99
 validation:      reference image comparison + debug-layer count
 ```
 
+Within a process, warmup and measurement are balanced across backends in short
+blocks. The start position rotates and traversal direction alternates. A backend
+must not own only the early or late portion of a run; first-backend startup,
+clock, thermal, and background-load effects would otherwise be confounded with
+the implementation being measured.
+
 ## 7. Measurement implementation
 
 ### CPU
@@ -291,6 +297,9 @@ run_id
 process_run
 frame_id
 backend
+schedule_round
+schedule_position
+block_frame
 scene
 resolution
 draw_count

@@ -102,6 +102,9 @@ static_assert(sizeof(EyeConstants) == 16, "Eye constant-buffer layout must match
 struct FrameRecord {
     std::uint64_t frame = 0;
     std::string backend;
+    std::uint64_t scheduleRound = 0;
+    std::uint32_t schedulePosition = 0;
+    std::uint32_t blockFrame = 0;
     double cpuPrepareUs = 0.0;
     double cpuSubmitUs = 0.0;
     double cpuTotalUs = 0.0;
@@ -868,6 +871,7 @@ void D3D11Lab::Impl::ResolveGpuQueries(const std::vector<GpuQueries>& queries,
 }
 
 void D3D11Lab::Impl::RunBenchmark() {
+    std::vector<std::string> eligible;
     for (const auto& backend : options_.backends) {
         const auto validation = std::find_if(validationRecords_.begin(), validationRecords_.end(),
                                              [&](const auto& item) { return item.backend == backend; });
@@ -875,65 +879,119 @@ void D3D11Lab::Impl::RunBenchmark() {
             logger_.Warn("benchmark", "Skipping " + backend + " because correctness validation failed.");
             continue;
         }
-        logger_.Info("benchmark", "Warmup for " + backend + ": " + std::to_string(options_.warmupFrames) + " frames.");
-        for (std::uint32_t frame = 0; frame < options_.warmupFrames; ++frame) {
-            RenderBackend(backend, options_.draws, nullptr);
-        }
-        context_->Flush();
+        eligible.push_back(backend);
+    }
+    if (eligible.empty()) return;
 
-        std::vector<GpuQueries> queries;
-        queries.reserve(options_.measuredFrames);
-        for (std::uint32_t frame = 0; frame < options_.measuredFrames; ++frame) queries.push_back(CreateGpuQueries());
-        std::vector<FrameRecord> records(options_.measuredFrames);
-        logger_.Info("benchmark", "Measuring " + backend + ": " + std::to_string(options_.measuredFrames) + " frames.");
+    constexpr std::uint32_t kBlockFrames = 25;
+    auto backendAt = [&](std::uint64_t round, std::size_t position) -> const std::string& {
+        const std::size_t count = eligible.size();
+        const std::size_t offset = static_cast<std::size_t>(round % count);
+        const bool reverse = ((round / count) % 2u) != 0;
+        const std::size_t index = reverse
+            ? (offset + count - 1u - position) % count
+            : (offset + position) % count;
+        return eligible[index];
+    };
 
-        for (std::uint32_t frame = 0; frame < options_.measuredFrames; ++frame) {
-            const auto totalBegin = Clock::now();
-            const auto prepareBegin = totalBegin;
-            // The packet lists are deliberately rebuilt: B0 duplicates invariant CPU packets,
-            // B1 shares one list, while B2/B3 submit a compact instance domain.
-            std::vector<std::uint32_t> packetA;
-            std::vector<std::uint32_t> packetB;
-            if (backend == "B0") {
-                packetA.resize(options_.draws);
-                std::iota(packetA.begin(), packetA.end(), 0u);
-                packetB = packetA;
-            } else if (backend == "B1") {
-                packetA.resize(options_.draws);
-                std::iota(packetA.begin(), packetA.end(), 0u);
-            } else {
-                packetA.push_back(options_.draws);
+    logger_.Info("benchmark", "Balanced warmup: " + std::to_string(options_.warmupFrames) +
+                                  " frames per backend in rotating " +
+                                  std::to_string(kBlockFrames) + "-frame blocks.");
+    std::map<std::string, std::uint32_t> warmupCompleted;
+    std::uint64_t warmupRound = 0;
+    while (warmupCompleted[eligible.front()] < options_.warmupFrames) {
+        for (std::size_t position = 0; position < eligible.size(); ++position) {
+            const auto& backend = backendAt(warmupRound, position);
+            const auto count = std::min(kBlockFrames,
+                                        options_.warmupFrames - warmupCompleted[backend]);
+            for (std::uint32_t frame = 0; frame < count; ++frame) {
+                RenderBackend(backend, options_.draws, nullptr);
             }
-            volatile std::uint32_t packetGuard = packetA.front();
-            if (!packetB.empty()) packetGuard ^= packetB.back();
-            (void)packetGuard;
-            const auto prepareEnd = Clock::now();
-            const auto submitBegin = prepareEnd;
-            RenderBackend(backend, options_.draws, &queries[frame]);
-            const auto submitEnd = Clock::now();
-            records[frame].frame = frame;
-            records[frame].backend = backend;
-            records[frame].cpuPrepareUs = Microseconds(prepareBegin, prepareEnd);
-            records[frame].cpuSubmitUs = Microseconds(submitBegin, submitEnd);
-            records[frame].cpuTotalUs = Microseconds(totalBegin, submitEnd);
+            warmupCompleted[backend] += count;
         }
-        ResolveGpuQueries(queries, records);
-        const auto validQueries = std::count_if(records.begin(), records.end(),
+        ++warmupRound;
+    }
+    context_->Flush();
+
+    std::map<std::string, std::vector<GpuQueries>> queries;
+    std::map<std::string, std::vector<FrameRecord>> records;
+    for (const auto& backend : eligible) {
+        queries[backend].reserve(options_.measuredFrames);
+        records[backend].reserve(options_.measuredFrames);
+    }
+    logger_.Info("benchmark", "Balanced measurement: " + std::to_string(options_.measuredFrames) +
+                                  " frames per backend; rotating start and alternating direction in " +
+                                  std::to_string(kBlockFrames) + "-frame blocks.");
+
+    std::uint64_t measurementRound = 0;
+    while (records[eligible.front()].size() < options_.measuredFrames) {
+        for (std::size_t position = 0; position < eligible.size(); ++position) {
+            const auto& backend = backendAt(measurementRound, position);
+            auto& backendQueries = queries[backend];
+            auto& backendRecords = records[backend];
+            const auto count = std::min<std::uint32_t>(
+                kBlockFrames,
+                options_.measuredFrames - static_cast<std::uint32_t>(backendRecords.size()));
+            for (std::uint32_t blockFrame = 0; blockFrame < count; ++blockFrame) {
+                backendQueries.push_back(CreateGpuQueries());
+                const auto totalBegin = Clock::now();
+                const auto prepareBegin = totalBegin;
+                // The packet lists are deliberately rebuilt: B0 duplicates invariant CPU packets,
+                // B1 shares one list, while B2/B3 submit a compact instance domain.
+                std::vector<std::uint32_t> packetA;
+                std::vector<std::uint32_t> packetB;
+                if (backend == "B0") {
+                    packetA.resize(options_.draws);
+                    std::iota(packetA.begin(), packetA.end(), 0u);
+                    packetB = packetA;
+                } else if (backend == "B1") {
+                    packetA.resize(options_.draws);
+                    std::iota(packetA.begin(), packetA.end(), 0u);
+                } else {
+                    packetA.push_back(options_.draws);
+                }
+                volatile std::uint32_t packetGuard = packetA.front();
+                if (!packetB.empty()) packetGuard ^= packetB.back();
+                (void)packetGuard;
+                const auto prepareEnd = Clock::now();
+                const auto submitBegin = prepareEnd;
+                RenderBackend(backend, options_.draws, &backendQueries.back());
+                const auto submitEnd = Clock::now();
+
+                FrameRecord record;
+                record.frame = backendRecords.size();
+                record.backend = backend;
+                record.scheduleRound = measurementRound;
+                record.schedulePosition = static_cast<std::uint32_t>(position);
+                record.blockFrame = blockFrame;
+                record.cpuPrepareUs = Microseconds(prepareBegin, prepareEnd);
+                record.cpuSubmitUs = Microseconds(submitBegin, submitEnd);
+                record.cpuTotalUs = Microseconds(totalBegin, submitEnd);
+                backendRecords.push_back(record);
+            }
+        }
+        ++measurementRound;
+    }
+
+    for (const auto& backend : eligible) {
+        ResolveGpuQueries(queries[backend], records[backend]);
+        const auto validQueries = std::count_if(records[backend].begin(), records[backend].end(),
                                                 [](const auto& record) { return record.queryValid; });
         logger_.Info("benchmark", backend + " collected " + std::to_string(validQueries) + "/" +
-                                      std::to_string(records.size()) + " valid GPU samples.");
-        frameRecords_.insert(frameRecords_.end(), records.begin(), records.end());
-        WriteBenchmarkCsv();
+                                      std::to_string(records[backend].size()) + " valid GPU samples.");
+        frameRecords_.insert(frameRecords_.end(), records[backend].begin(), records[backend].end());
     }
+    WriteBenchmarkCsv();
 }
 
 void D3D11Lab::Impl::WriteBenchmarkCsv() const {
     std::ofstream csv(paths_.benchmark, std::ios::trunc);
     if (!csv) throw std::runtime_error("Could not create benchmark.csv.");
-    csv << "run_id,process_run,frame_id,backend,backend_description,scene,width_per_eye,height,draws,triangles_per_eye,instances_per_eye,adapter,adapter_luid,driver,feature_level,debug_layer,warp,build_hash,binary_sha256,shader_sha256,cpu_prepare_us,cpu_submit_us,cpu_total_us,gpu_total_us,query_valid\n";
+    csv << "run_id,process_run,frame_id,backend,backend_description,schedule_round,schedule_position,block_frame,scene,width_per_eye,height,draws,triangles_per_eye,instances_per_eye,adapter,adapter_luid,driver,feature_level,debug_layer,warp,build_hash,binary_sha256,shader_sha256,cpu_prepare_us,cpu_submit_us,cpu_total_us,gpu_total_us,query_valid\n";
     for (const auto& record : frameRecords_) {
         csv << CsvEscape(paths_.runId) << ",1," << record.frame << ',' << record.backend << ','
-            << CsvEscape(BackendDescription(record.backend)) << ',' << options_.scene << ','
+            << CsvEscape(BackendDescription(record.backend)) << ',' << record.scheduleRound << ','
+            << record.schedulePosition << ',' << record.blockFrame << ',' << options_.scene << ','
             << options_.widthPerEye << ',' << options_.height << ',' << options_.draws << ','
             << options_.draws * 12ull << ',' << options_.draws << ',' << CsvEscape(adapterName_) << ','
             << adapterLuid_ << ',' << CsvEscape(driverVersion_) << ',' << FeatureLevelName(featureLevel_) << ','
@@ -1010,7 +1068,8 @@ void D3D11Lab::Impl::WriteSummary() const {
     }
 
     summary << "\n## Performance\n\n"
-            << "Debug-layer runs are correctness evidence, not release-performance evidence. GPU statistics omit invalid/disjoint samples.\n\n"
+            << "Debug-layer runs are correctness evidence, not release-performance evidence. GPU statistics omit invalid/disjoint samples. "
+            << "Measurement uses balanced 25-frame blocks with rotating start position and alternating direction.\n\n"
             << "| Backend | CPU prepare mean (us) | CPU submit mean/P50/P95/P99 (us) | GPU mean/P50/P95/P99 (us) | Valid GPU samples |\n"
             << "|---|---:|---|---|---:|\n";
     std::map<std::string, double> cpuMedians;
