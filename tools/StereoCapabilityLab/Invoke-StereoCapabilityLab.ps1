@@ -22,6 +22,25 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $algorithm = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+        }
+        finally {
+            $algorithm.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputRoot)
 [System.IO.Directory]::CreateDirectory($resolvedOutput) | Out-Null
 $wrapperLog = Join-Path $resolvedOutput 'launcher-events.jsonl'
@@ -63,7 +82,7 @@ $startEvent = [ordered]@{
     utc = $started.ToString('o')
     event = 'process_start'
     executable = $resolvedExecutable
-    executable_sha256 = (Get-FileHash -LiteralPath $resolvedExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
+    executable_sha256 = Get-Sha256Hex -Path $resolvedExecutable
     mode = $Mode
     arguments = $arguments
     pid = $PID

@@ -47,8 +47,11 @@ struct GeometryOutput
 {
     float4 position : SV_Position;
     float4 color : COLOR0;
-    uint viewport : SV_ViewportArrayIndex;
     float seamClip : SV_ClipDistance0;
+    // Keep pixel-consumed fields in the same declaration order as PixelInput.
+    // Otherwise the D3D11 linker assigns SV_ClipDistance a different hardware
+    // register even though the semantic names match.
+    uint viewport : SV_ViewportArrayIndex;
 };
 
 float3 ApplyVertexWork(float3 position)

@@ -153,3 +153,33 @@ These percentages remain a synthetic upper bound, not a prediction of Skyrim
 FPS. In-game promotion is still blocked by the missing debug-layer qualification
 and by the need for StereoTrace to prove a reachable, material-safe duplicated
 region in Skyrim/CSX.
+
+## D3D11 debug-layer qualification
+
+Windows Graphics Tools (`Tools.Graphics.DirectX`) was installed and completed
+after a controlled Windows restart. The post-restart system has
+`d3d11_3SDKLayers.dll`, no active DISM process and no CBS reboot-pending state.
+
+The first 1280x1280 debug-layer validation, run
+`20260817T152611.223Z-p25700`, retained correct B0-B3 color/depth output but
+correctly failed with D3D11 message ID 343: B3's geometry-shader
+`SV_ClipDistance` output and pixel-shader input were assigned different hardware
+registers. `SV_ViewportArrayIndex` was declared between the pixel-consumed color
+and clip-distance fields in `GeometryOutput`, changing signature packing.
+
+The fix keeps all pixel-consumed fields in the same declaration order in
+`GeometryOutput` and `PixelInput`, moving the viewport-only semantic after
+`SV_ClipDistance`. A local package made from the unchanged CI binary plus the
+corrected runtime shader and launcher produced run
+`20260817T152702.023Z-p27104`:
+
+- B0-B3 color and depth validation: pass;
+- B2 maximum channel delta: 1, with zero pixels outside tolerance;
+- D3D11 debug errors: 0;
+- D3D11 debug warnings: 0;
+- process exit: 0.
+
+The launcher was also hardened to compute its executable SHA-256 directly with
+.NET rather than depending on PowerShell module autoloading. The debug-layer
+result becomes final qualification evidence after the corrected shader and
+launcher are packaged by CI and the CI artifact reproduces the zero-message run.
